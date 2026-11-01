@@ -29,13 +29,14 @@ def local_search(query):
 
 @mcp.tool
 def search_properties(query: str) -> str:
+    """Search flats, villas and plots with price, BHK, area, floor, parking and possession."""
     return local_search(query)
 
 
 @mcp.tool
 def search_loan(query: str) -> str:
+    """Search home loan eligibility, salary required, down payment, EMI, interest rate and subsidy."""
     return local_search(query)
-
 
 @mcp.tool
 def search_legal(query: str) -> str:

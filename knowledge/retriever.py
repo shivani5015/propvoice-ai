@@ -4,8 +4,6 @@ from knowledge.vector_store import VectorStore
 
 
 class Retriever:
-    """Sawal ka vector banata hai aur index se sabse milte-julte chunks laata hai."""
-
     def __init__(self, config: dict):
         self.top_k = config["retrieval"]["top_k"]
         self.min_similarity = config["retrieval"]["min_similarity"]
@@ -14,7 +12,6 @@ class Retriever:
         log.info(f"Retriever ready with {len(self.chunks)} indexed chunks")
 
     def retrieve(self, query: str):
-        """[{source, chunk_id, text, score}] lauta do. Kam score wale chhod do."""
         query_vec = embed([query])
         scores, indices = self.index.search(query_vec, self.top_k)
         results = []
@@ -31,8 +28,15 @@ class Retriever:
                 "score": round(float(score), 4),
             })
 
-        if query != "warm up":      # keep_warm ka apna sawal - iska log nahi chahiye
-            log.info(f"Retrieved {len(results)} chunks | top score={round(float(scores[0][0]), 4)} "
+        
+        if query != "warm up":      
+
+            names = []
+            for r in results:
+                names.append(f"{r['source']} #{r['chunk_id']} ({r['score']})")
+
+            log.info(f"Retrieved {len(results)} chunks from {', '.join(names)} "
+                     f"| top score={round(float(scores[0][0]), 4)} "
                      f"| chahiye {self.min_similarity} | query: '{query}'")
 
         return results

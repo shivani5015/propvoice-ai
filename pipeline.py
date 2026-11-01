@@ -8,7 +8,8 @@ import requests
 from groq import Groq
 from fastmcp import Client
 
-from config import HEADERS, GROQ_KEY, STT_MODEL, LLM_MODEL, TTS_MODEL, SPEAKER, LANG, MAX_TOKENS
+from config import (HEADERS, GROQ_KEY, STT_MODEL, LLM_MODEL, TTS_MODEL, SPEAKER, LANG,
+                    MAX_TOKENS, COST)
 from logger import log
 
 client = Groq(api_key=GROQ_KEY)
@@ -40,7 +41,7 @@ DOMAIN_WORDS = set(
 
 PROMPT = ("You are a real estate voice assistant for a property dealer in Jaipur. "
           "Answer ONLY from the context below, never from your own knowledge. "
-          "One or two short sentences, under 20 words."
+          "One or two short sentences, under 20 words. "
           "Say amounts exactly as written in the context, in lakh or crore. "
           "If the answer is not in the context, reply exactly: "
           "Sorry, I do not have that information.")
@@ -70,6 +71,39 @@ def pick_tool(question):
 def is_domain(question):
     """Sawal property se juda hai ya nahi. rstrip se charges/documents bhi match ho jate hain."""
     return bool({w.rstrip("s") for w in question.lower().replace("?", " ").split()} & DOMAIN_WORDS)
+
+
+def get_cost(audio_kb: float, tts_chars: int, tokens: tuple, tool: str) -> dict:
+    """Ek sawal ka kharcha rupaye me. Rates config.py ke COST me hain."""
+
+    # 1. STT - awaaz se text. Audio kitne KB ka tha, uspe lagta hai
+    stt = audio_kb * COST["stt_per_kb"]
+
+    # 2. TTS - text se awaaz. Jawab me kitne akshar the, uspe lagta hai
+    tts = (tts_chars / 1000) * COST["tts_per_1k_chars"]
+
+    # 3. LLM - andar gaye token aur bahar aaye token, dono ka rate alag hai
+    tokens_in = tokens[0]
+    tokens_out = tokens[1]
+
+    llm_in = (tokens_in / 1000000) * COST["llm_in_per_1m"]      # 10 lakh tokens
+    llm_out = (tokens_out / 1000000) * COST["llm_out_per_1m"]
+    llm = llm_in + llm_out
+
+    # 4. Web search - sirf tab jab Serper chali ho, warna zero
+    web = 0
+    if tool == "search_web_tool":
+        web = COST["web_per_search"]
+
+    total = stt + tts + llm + web
+
+    return {
+        "stt": round(stt, 4),
+        "tts": round(tts, 4),
+        "llm": round(llm, 4),
+        "web": round(web, 4),
+        "total": round(total, 4),
+    }
 
 
 def save_record(record):
@@ -166,9 +200,12 @@ async def run(in_file, out_file):
     """Pura pipeline: awaaz -> tool -> LLM -> awaaz."""
     t0 = t = time.time()
 
-    # bahut chhoti recording me awaaz hoti hi nahi -> Sarvam ko bhejne ka fayda nahi
-    if Path(in_file).stat().st_size < 1000:
+    audio_kb = round(Path(in_file).stat().st_size / 1024, 2)
+
+    # 1 KB se chhoti recording me awaaz hoti hi nahi -> Sarvam ko bhejne ka fayda nahi
+    if audio_kb < 1:
         user = ""
+        audio_kb = 0        # STT call hi nahi gayi, to uska kharcha bhi nahi
     else:
         user = await asyncio.to_thread(speech_to_text, in_file)
 
@@ -179,6 +216,8 @@ async def run(in_file, out_file):
     else:
         tool, ai, tokens = "none", SORRY_HEARD, (0, 0, 0)   # awaaz samajh nahi aayi
 
+    cached = ai in SAVED_AUDIO      # awaaz pehle se bani hai -> Sarvam call nahi jayegi
+
     t = time.time()
     await asyncio.to_thread(text_to_speech, ai, out_file)
     sec["tts_sec"] = since(t)
@@ -188,10 +227,18 @@ async def run(in_file, out_file):
     log.info(f"STT={sec['stt_sec']}s | SEARCH={sec['search_sec']}s | LLM={sec['llm_sec']}s "
              f"| TTS={sec['tts_sec']}s | TOTAL={sec['total_sec']}s | tool={tool}")
     log.info(f"TOKENS: in={tokens[0]} out={tokens[1]} total={tokens[2]}")
-    log.info(f"USER: {user} | AI: {ai}")
+
+    tts_chars = len(ai)
+    if cached:
+        tts_chars = 0       # awaaz cache se aayi thi, Sarvam ko call nahi gayi
+
+    cost = get_cost(audio_kb, tts_chars, tokens, tool)
+    log.info(f"COST (Rs): stt={cost['stt']} tts={cost['tts']} llm={cost['llm']} "
+             f"web={cost['web']} TOTAL={cost['total']}")
 
     meta = {"tool": tool, **sec, "tokens_in": tokens[0],
-            "tokens_out": tokens[1], "total_tokens": tokens[2]}
+            "tokens_out": tokens[1], "total_tokens": tokens[2],
+            "audio_kb": audio_kb, "cost_rs": cost["total"]}
     save_record({"time": time.strftime("%Y-%m-%d %H:%M:%S"),
                  "question": user, "answer": ai, **meta})
 
