@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+requests
+groq
+fastmcp
+sentence-transformers
+faiss-cpu
+pdfplumber

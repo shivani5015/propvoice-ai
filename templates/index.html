@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Real Estate Voice Assistant</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #f5f6f8;
+    color: #1c1d21;
+    display: flex;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 24px 16px;
+  }
+
+  .app { width: 100%; max-width: 720px; display: flex; flex-direction: column; gap: 16px; }
+
+  header { text-align: center; }
+  header h1 { font-size: 22px; font-weight: 600; }
+  header p { font-size: 13px; color: #6b6f76; margin-top: 4px; }
+
+  /* ---------- chat ---------- */
+  #chat {
+    background: #fff;
+    border: 1px solid #e4e6ea;
+    border-radius: 14px;
+    padding: 16px;
+    min-height: 260px;
+    max-height: 48vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .empty { margin: auto; color: #9aa0a8; font-size: 14px; }
+
+  .turn { display: flex; flex-direction: column; gap: 6px; }
+
+  .you, .ai {
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 15px;
+    line-height: 1.5;
+    max-width: 85%;
+  }
+  .you { background: #2f6fed; color: #fff; align-self: flex-end; border-bottom-right-radius: 4px; }
+  .ai  { background: #f0f1f4; align-self: flex-start; border-bottom-left-radius: 4px; }
+
+  /* ---------- metrics ---------- */
+  .meta { display: flex; flex-wrap: wrap; gap: 6px; align-self: flex-start; }
+
+  .chip {
+    font-size: 11px;
+    font-family: ui-monospace, Consolas, monospace;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: #f0f1f4;
+    color: #5b6068;
+  }
+  .chip b { font-weight: 600; color: #1c1d21; }
+
+  .tool { color: #fff; }
+  .tool-properties { background: #2f6fed; }
+  .tool-loan      { background: #0f9d58; }
+  .tool-legal     { background: #7a5af5; }
+  .tool-knowledge { background: #11998e; }
+  .tool-web       { background: #d79a12; }
+  .tool-off       { background: #8a9099; }
+
+  /* ---------- hints ---------- */
+  .hints { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+  .hint {
+    font-size: 12px;
+    padding: 5px 11px;
+    border: 1px solid #dfe2e7;
+    border-radius: 999px;
+    background: #fff;
+    color: #5b6068;
+  }
+
+  /* ---------- mic ---------- */
+  .controls { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+
+  #btn {
+    width: 150px;
+    padding: 14px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #fff;
+    background: #2f6fed;
+    border: none;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  #btn:hover:not(:disabled) { background: #265ed4; }
+  #btn.rec { background: #e03e3e; animation: pulse 1.2s infinite; }
+  #btn:disabled { background: #b9bdc4; cursor: not-allowed; animation: none; }
+
+  @keyframes pulse { 50% { opacity: .65; } }
+
+  #status { font-size: 13px; color: #6b6f76; min-height: 18px; }
+  .err { color: #d1393c; }
+
+  /* Chrome kabhi khud se awaaz nahi bajata -> player dikha dete hain */
+  #player { width: 100%; max-width: 320px; height: 36px; }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header>
+    <h1>🏠 Real Estate Voice Assistant</h1>
+    <p>Properties · Home Loan · Registry &amp; Charges &nbsp;|&nbsp; RAG + MCP tools + web fallback</p>
+  </header>
+
+  <div id="chat"><div class="empty">Button dabao aur sawal pucho</div></div>
+
+  <div class="hints">
+    <span class="hint">What is the price of the 3 BHK flat in Mansarovar?</span>
+    <span class="hint">How much salary do I need for a home loan?</span>
+    <span class="hint">How much stamp duty do I have to pay?</span>
+    <span class="hint">What is the total cost of buying the 62 lakh flat?</span>
+  </div>
+
+  <div class="controls">
+    <button id="btn">Click to Speak</button>
+    <div id="status">Press the button and start speaking...</div>
+    <audio id="player" controls></audio>
+  </div>
+</div>
+
+<script>
+const btn = document.getElementById("btn");
+const chat = document.getElementById("chat");
+const status = document.getElementById("status");
+const player = document.getElementById("player");
+let recorder, chunks = [];
+
+// tool ka naam -> rang wali class
+function toolClass(tool) {
+  if (tool.includes("propert")) return "tool-properties";
+  if (tool.includes("loan")) return "tool-loan";
+  if (tool.includes("legal")) return "tool-legal";
+  if (tool.includes("web")) return "tool-web";
+  if (tool.includes("off")) return "tool-off";
+  return "tool-knowledge";
+}
+
+function addTurn(user, ai, m) {
+  chat.querySelector(".empty")?.remove();
+
+  const turn = document.createElement("div");
+  turn.className = "turn";
+  turn.innerHTML = `
+    <div class="you">${user || "(awaaz saaf nahi thi)"}</div>
+    <div class="ai">${ai}</div>
+    <div class="meta">
+      <span class="chip tool ${toolClass(m.tool)}">${m.tool}</span>
+      <span class="chip"><b>${m.total_sec}s</b> total</span>
+      <span class="chip">STT ${m.stt_sec}</span>
+      <span class="chip">SEARCH ${m.search_sec}</span>
+      <span class="chip">LLM ${m.llm_sec}</span>
+      <span class="chip">TTS ${m.tts_sec}</span>
+      <span class="chip">${m.total_tokens} tokens</span>
+    </div>`;
+
+  chat.appendChild(turn);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+btn.onclick = async () => {
+  if (recorder && recorder.state === "recording") return recorder.stop();
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    status.innerHTML = '<span class="err">Microphone permission denied</span>';
+    return;
+  }
+
+  recorder = new MediaRecorder(stream, { audioBitsPerSecond: 16000 });
+  chunks = [];
+  recorder.ondataavailable = e => chunks.push(e.data);
+
+  recorder.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());      // mic band
+    btn.disabled = true;
+    btn.classList.remove("rec");
+    btn.innerText = "Processing...";
+    status.innerText = "AI jawab bana raha hai...";
+
+    const form = new FormData();
+    form.append("file", new Blob(chunks, { type: "audio/webm" }), "audio.webm");
+
+    try {
+      const res = await fetch("/chat", { method: "POST", body: form });
+      const data = await res.json();
+
+      if (res.ok) {
+        addTurn(data.user, data.ai, data.meta);
+
+        // ?time lagaya -> browser purani mp3 cache se nahi uthayega
+        player.src = "/audio?" + Date.now();
+        player.play()
+          .then(() => status.innerText = "Press the button and start speaking...")
+          .catch(() => status.innerHTML =
+            '<span class="err">Chrome ne awaaz roki - neeche play dabao</span>');
+      } else {
+        status.innerHTML = '<span class="err">Error: ' + data.error + '</span>';
+      }
+    } catch (e) {
+      status.innerHTML = '<span class="err">Server error: ' + e.message + '</span>';
+    }
+
+    btn.disabled = false;
+    btn.innerText = "Click to Speak";
+  };
+
+  recorder.start();
+  btn.classList.add("rec");
+  btn.innerText = "Stop & Send";
+  status.innerText = "Sun raha hoon... boliye";
+
+  // 25 sec par apne aap band (Sarvam ki limit 30 sec hai)
+  setTimeout(() => recorder.state === "recording" && recorder.stop(), 25000);
+};
+</script>
+
+</body>
+</html>
