@@ -1,3 +1,5 @@
+"""Paanchon MCP tools yahan hain — 4 local (vector DB se) + 1 web (Serper se)."""
+
 import os
 from pathlib import Path
 
@@ -11,12 +13,13 @@ from knowledge.retriever import Retriever
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 NOT_FOUND = "NOT_FOUND"
-serper = requests.Session()     
-retriever = Retriever(RAG)   
+serper = requests.Session()    
+retriever = Retriever(RAG)      
 mcp = FastMCP("property")
 
 
 def local_search(query):
+    """Vector DB se chunks lao. Kuch na mile to NOT_FOUND bhejo."""
     results = retriever.retrieve(query)
 
     if not results:
@@ -26,6 +29,7 @@ def local_search(query):
 
 
 # ---------- 4 custom tools ----------
+# Chaaron andar se local_search hi hain, bas MCP pe naam aur kaam alag hai
 
 @mcp.tool
 def search_properties(query: str) -> str:
@@ -37,6 +41,7 @@ def search_properties(query: str) -> str:
 def search_loan(query: str) -> str:
     """Search home loan eligibility, salary required, down payment, EMI, interest rate and subsidy."""
     return local_search(query)
+
 
 @mcp.tool
 def search_legal(query: str) -> str:
@@ -75,8 +80,7 @@ def search_web_tool(query: str) -> str:
         box = data.get("answerBox") or {}
         parts.append(box.get("answer") or box.get("snippet") or "")
 
-        # link nahi bhej rahe -> TTS URL nahi bolega, tokens bhi bachte hain
-        for x in data.get("organic", [])[:3]:
+        for x in data.get("organic", [])[:10]:
             parts.append(f"{x.get('title')}\n{x.get('snippet')}")
 
         return "\n\n".join(p for p in parts if p) or NOT_FOUND

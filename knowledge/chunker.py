@@ -5,12 +5,11 @@ from knowledge.loader import load_documents
 def chunk_text(text: str, chunk_size: int, chunk_overlap: int):
     chunks = []
     current = ""
-
+    
     for para in text.split("\n\n"):
         para = para.strip()
         if not para:
             continue
-
         if len(current) + len(para) <= chunk_size:
             current = current + "\n\n" + para if current else para
         else:
@@ -23,9 +22,7 @@ def chunk_text(text: str, chunk_size: int, chunk_overlap: int):
 
     if current:
         chunks.append(current)
-
     return chunks
-
 
 def build_chunks(chunk_size: int, chunk_overlap: int):
     docs = load_documents()

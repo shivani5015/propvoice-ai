@@ -16,11 +16,11 @@ client = Groq(api_key=GROQ_KEY)
 mcp = Client("http://127.0.0.1:8001/mcp")
 sarvam = requests.Session()      # connection khula rehta hai -> har baar naya nahi banta
 connected = False
-HISTORY = Path(__file__).with_name("logs") / "history.json"   # project folder me hi bane
+HISTORY = Path(__file__).with_name("logs") / "history.json"
 
 # tool ka naam khud ek keyword hai (search_loan -> loan), saath me kuch aam shabd.
-# KRAM ZAROORI HAI: upar wala pehle check hota hai, isliye khaas tool pehle rakho.
-# "total" aur "upfront" legal me hai -> "total kitna lagega" wala sawal charges wale page pe jaye
+# KRAM ZAROORI HAI: "total" legal me hai aur upar hai, isliye "total kitna lagega"
+# wala sawal charges wale page pe jaata hai, flat ki row pe nahi
 TOOLS = {
     "search_loan":  "loan emi eligibility cibil salary income downpayment payment interest subsidy tenure".split(),
     "search_legal": "stamp duty registry registration gst patta khatedari rera brokerage "
@@ -29,8 +29,7 @@ TOOLS = {
                          "parking furnished locality possession".split(),
 }
 
-# Serper tabhi chalegi jab sawal me in me se koi shabd ho.
-# Iska side effect: "gold rate today" jaisa sawal bhi Serper pe chala jayega (kyunki "rate" hai)
+# Serper tabhi chalegi jab sawal me in me se koi shabd ho
 DOMAIN_WORDS = set(
     "property flat villa plot bhk house home buy sell rent price cost rate "
     "area sqft sqyd yard floor parking furnished locality possession "
@@ -39,12 +38,23 @@ DOMAIN_WORDS = set(
     "brokerage broker builder dealer maintenance deposit booking token circle "
     "charge charges document documents total upfront".split())
 
+# Documents ke liye. Yahan mana karna zaroori hai, warna web fallback trigger hi nahi hoga
 PROMPT = ("You are a real estate voice assistant for a property dealer in Jaipur. "
           "Answer ONLY from the context below, never from your own knowledge. "
           "One or two short sentences, under 20 words. "
           "Say amounts exactly as written in the context, in lakh or crore. "
           "If the answer is not in the context, reply exactly: "
           "Sorry, I do not have that information.")
+
+# Web ke liye alag. Upar wale me "Jaipur ka dealer" aur "lakh or crore" hai, jisse LLM
+# Maharashtra ya percent wale sawal ko dayre se bahar samajh ke mana kar deta tha
+WEB_PROMPT = ("Answer the question from the web search results below. "
+              "The results are short snippets, so join the useful parts into one answer. "
+              "If the results contain a number, percentage or name, state it. "
+              "One or two short sentences, under 25 words. "
+              "Only if the results contain nothing relevant, reply exactly: "
+              "I could not find that on the web.")
+
 SORRY_HEARD = "Sorry, I could not hear you clearly. Please try again."
 SORRY_FOUND = "Sorry, I could not find that information."
 OFF_TOPIC = "I can only answer questions about properties, home loans and registration."
@@ -76,23 +86,19 @@ def is_domain(question):
 def get_cost(audio_kb: float, tts_chars: int, tokens: tuple, tool: str) -> dict:
     """Ek sawal ka kharcha rupaye me. Rates config.py ke COST me hain."""
 
-    # 1. STT - awaaz se text. Audio kitne KB ka tha, uspe lagta hai
-    stt = audio_kb * COST["stt_per_kb"]
+    stt = audio_kb * COST["stt_per_kb"]                        # audio ke KB pe
+    tts = (tts_chars / 1000) * COST["tts_per_1k_chars"]        # jawab ke akshar pe
 
-    # 2. TTS - text se awaaz. Jawab me kitne akshar the, uspe lagta hai
-    tts = (tts_chars / 1000) * COST["tts_per_1k_chars"]
-
-    # 3. LLM - andar gaye token aur bahar aaye token, dono ka rate alag hai
+    # input aur output token ka rate alag hai
     tokens_in = tokens[0]
     tokens_out = tokens[1]
 
-    llm_in = (tokens_in / 1000000) * COST["llm_in_per_1m"]      # 10 lakh tokens
+    llm_in = (tokens_in / 1000000) * COST["llm_in_per_1m"]
     llm_out = (tokens_out / 1000000) * COST["llm_out_per_1m"]
     llm = llm_in + llm_out
 
-    # 4. Web search - sirf tab jab Serper chali ho, warna zero
     web = 0
-    if tool == "search_web_tool":
+    if tool == "search_web_tool":       # Serper chali to hi kharcha
         web = COST["web_per_search"]
 
     total = stt + tts + llm + web
@@ -140,25 +146,30 @@ async def answer(question, sec):
         context = await ask_tool(tool, question)
         sec["search_sec"] += since(t)
 
+        if tool == "search_web_tool":
+            log.info(f"WEB CONTEXT ({len(context)} chars): {context[:400]}")
+
         if "NOT_FOUND" not in context:              # ye word tools.py bhejti hai
+            prompt = WEB_PROMPT if tool == "search_web_tool" else PROMPT
+
             t = time.time()
-            ai, tokens = await asyncio.to_thread(ask_llm, question, context)
+            ai, tokens = await asyncio.to_thread(ask_llm, question, context, prompt)
             sec["llm_sec"] += since(t)
 
             if "do not have" not in ai.lower():
-                return tool, ai, tokens             # jawab mil gaya
+                return tool, ai, tokens
 
-        if not is_domain(question):                 # property ka sawal hi nahi -> web mat jao
+        if not is_domain(question):
             return "off_topic", OFF_TOPIC, tokens
 
-    return "search_web_tool", ai or SORRY_FOUND, tokens
+    return "search_web_tool", SORRY_FOUND, tokens
 
 
-def ask_llm(question, context):
+def ask_llm(question, context, prompt=PROMPT):
     """Context se chhota jawab banao. Khali aaya to sorry bol do."""
     res = client.chat.completions.create(
         model=LLM_MODEL, max_completion_tokens=MAX_TOKENS, temperature=0.2,
-        messages=[{"role": "system", "content": PROMPT},
+        messages=[{"role": "system", "content": prompt},
                   {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}])
     answer = (res.choices[0].message.content or "").strip() or SORRY_FOUND
     u = res.usage
@@ -189,7 +200,7 @@ def text_to_speech(text, file):
 
         audio = base64.b64decode(res.json()["audios"][0])
 
-        if text in FIXED_REPLIES:      # ye teen jawab hamesha same hote hain
+        if text in FIXED_REPLIES:
             SAVED_AUDIO[text] = audio
 
     with open(file, "wb") as f:
@@ -214,9 +225,9 @@ async def run(in_file, out_file):
     if user.strip():
         tool, ai, tokens = await answer(user, sec)
     else:
-        tool, ai, tokens = "none", SORRY_HEARD, (0, 0, 0)   # awaaz samajh nahi aayi
+        tool, ai, tokens = "none", SORRY_HEARD, (0, 0, 0)
 
-    cached = ai in SAVED_AUDIO      # awaaz pehle se bani hai -> Sarvam call nahi jayegi
+    cached = ai in SAVED_AUDIO      # pehle se bani awaaz -> Sarvam call nahi jayegi
 
     t = time.time()
     await asyncio.to_thread(text_to_speech, ai, out_file)
@@ -230,7 +241,7 @@ async def run(in_file, out_file):
 
     tts_chars = len(ai)
     if cached:
-        tts_chars = 0       # awaaz cache se aayi thi, Sarvam ko call nahi gayi
+        tts_chars = 0       # cache se aayi thi, Sarvam ko call nahi gayi
 
     cost = get_cost(audio_kb, tts_chars, tokens, tool)
     log.info(f"COST (Rs): stt={cost['stt']} tts={cost['tts']} llm={cost['llm']} "

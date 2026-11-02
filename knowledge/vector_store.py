@@ -17,8 +17,7 @@ class VectorStore:
     def build(self, chunks: list):
 
         vectors = embed([c["text"] for c in chunks])
-
-        index = faiss.IndexFlatIP(vectors.shape[1])      # IP = cosine similarity
+        index = faiss.IndexFlatIP(vectors.shape[1])     
         index.add(vectors)
 
         self.dir.mkdir(exist_ok=True)

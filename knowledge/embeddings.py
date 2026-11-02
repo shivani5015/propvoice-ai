@@ -7,7 +7,6 @@ MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 def get_model():
     return SentenceTransformer(MODEL_NAME)
 
-
 def embed(texts: list):
     vectors = get_model().encode(
         texts,
@@ -15,4 +14,5 @@ def embed(texts: list):
         convert_to_numpy=True,
         show_progress_bar=False,       
     )
+
     return vectors.astype("float32")
